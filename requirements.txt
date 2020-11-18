@@ -1,0 +1,5 @@
+librosa
+ffmpeg
+numpy
+torch
+tqdm
