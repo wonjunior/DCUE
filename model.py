@@ -76,7 +76,7 @@ class DCUEWrapper:
         self.model = model
         self.train_dl = train_dl
         self.valid_dl = valid_dl
-        self.optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9, nesterov=True)
+        self.optimizer = optim.SGD(model.parameters(), lr=0.2, momentum=0.9, nesterov=True)
         self.criterion = nn.MultiMarginLoss(margin=0.2)
         self.fp = 'run.pth'
 
@@ -116,7 +116,8 @@ class DCUEWrapper:
 
     def train_epoch(self):
         losses = []
-        for x in (t := tqdm(self.train_dl)):
+        t = tqdm(self.train_dl)
+        for x in t:
             self.optimizer.zero_grad()
 
             y = torch.zeros(x[0].shape[0], dtype=torch.long)
