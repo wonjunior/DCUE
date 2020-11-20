@@ -28,14 +28,17 @@ class PlaylistEncoder():
 
 
 class MelEncoder():
-    def __init__(self, fp, length):
+    def __init__(self, fp, mean, std, length):
         self.fp = fp
         self.length = length
+        self.mean = mean
+        self.std = std
 
     def __call__(self, tid):
         mel = np.load(os.sep.join((self.fp, tid+'.npy')))
         tiled = np.tile(mel, (1, 1 + self.length // mel.shape[1]))
-        return tiled[:,:self.length]
+        normalized = (tiled[:,:self.length] - self.mean) / self.std
+        return normalized
 
     def __len__(self):
         return self.length
