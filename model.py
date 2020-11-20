@@ -1,5 +1,6 @@
-from statistics import mean
 import time
+from statistics import mean
+from datetime import timedelta
 
 import torch
 import torch.nn as nn
@@ -10,11 +11,12 @@ class PlaylistMLP(nn.Module):
     def __init__(self, encoding_size, embedding_size):
         super(PlaylistMLP, self).__init__()
         self.body = nn.Sequential(
-            nn.Linear(encoding_size, 256),
+            nn.Embedding(encoding_size, 300),
+            nn.Flatten(),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(300, 300),
             nn.ReLU(),
-            nn.Linear(128, embedding_size)
+            nn.Linear(300, embedding_size)
         )
 
     def forward(self, y):
@@ -53,7 +55,7 @@ class MelCNN(nn.Module):
     def forward(self, y):
         return self.body(y)
 
-
+import pdb
 class DCUE(nn.Module):
     def __init__(self, playlist_enc_size, embedding_size): # add option to change similarity
         super(DCUE, self).__init__()
@@ -62,41 +64,46 @@ class DCUE(nn.Module):
         self.similarity = nn.CosineSimilarity()
 
     def forward(self, playlist, positive, negatives):
-        U = self.mlp(playlist.float())
+        assert(len(negatives) == 20)
+        U = self.mlp(playlist.long())
         I_pos = self.cnn(positive.float())
         I_neg = [self.cnn(n.float()) for n in negatives]
         I = torch.stack([I_pos] + I_neg, axis=1)
-        return torch.stack([self.similarity(U, I[:,i]) for i in range(I.shape[1])], axis=1)
+        sim = torch.stack([self.similarity(U, I[:,i]) for i in range(I.shape[1])], axis=1)
 
+        # pdb.set_trace()
+
+        return sim
 
 class DCUEWrapper:
     """Runner wrapper for the DCUE model."""
 
-    def __init__(self, model, train_dl, valid_dl):
+    def __init__(self, model, train_dl, valid_dl, fp):
         self.model = model
         self.train_dl = train_dl
         self.valid_dl = valid_dl
         self.optimizer = optim.SGD(model.parameters(), lr=0.2, momentum=0.9, nesterov=True)
-        self.criterion = nn.MultiMarginLoss(margin=0.2)
-        self.fp = 'run.pth'
+        self.criterion = nn.MultiMarginLoss(margin=1)#0.2)
+        self.fp = fp
 
     def train(self, epochs, load=None):
         if load:
-            losses, since = self.load()
+            start, losses, since = self.load(load)
+            print('Resume training at epoch={} (already elapsed: {})' \
+                .format(start + 1, timedelta(seconds=time.time()-since)))
         else:
-            losses = []
-            since = time.time()
+            start, losses, since = 0, [], time.time()
 
-        for epoch in range(epochs):
-            print('Epoch %i/%i' % (epoch+1, epochs))
+        for epoch in range(start, epochs):
+            print('Epoch %i/%i' % (epoch + 1, epochs))
             losses += self.train_epoch()
             elapsed = time.time() - since
             self.checkpoint(epoch, losses, elapsed)
 
-            validation_loss = self.validate()
+            validation_loss = [0]#self.validate()
             print('summary of epoch: training loss={:.4f} - validation loss={:.4f}' \
                 .format(mean(losses), mean(validation_loss)))
-        print('Training finished in {:.0f}m {:.0f}s'.format(elapsed // 60, elapsed % 60))
+        print('Training finished in {}'.format(timedelta(seconds=elapsed)))
 
     def checkpoint(self, epoch, losses, elapsed):
         torch.save({
@@ -107,12 +114,13 @@ class DCUEWrapper:
             'elapsed': elapsed
         }, self.fp)
 
-    def load(self):
-        checkpoint = torch.load(self.fp)
-        start_epoch = checkpoint['epoch']
+    def load(self, fp):
+        print('loading state from %s' % fp)
+        checkpoint = torch.load(fp)
         self.model.load_state_dict(checkpoint['state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
-        return checkpoint['losses'], checkpoint['elapsed']
+        start = time.time() - checkpoint['elapsed']
+        return checkpoint['epoch'], checkpoint['losses'], start
 
     def train_epoch(self):
         losses = []
@@ -130,7 +138,7 @@ class DCUEWrapper:
             loss = loss.item()
             accuracy = (torch.argmax(y_hat, dim=1) == 0).float().mean().item()
             losses.append(loss)
-            t.set_description('loss {:.4f} - accuracy {:.0f}%'.format(loss, accuracy*100))
+            t.set_description('loss {:.5f} - accuracy {:.1f}%'.format(loss, accuracy*100))
         return losses
 
     def validate(self):

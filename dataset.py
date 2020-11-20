@@ -28,7 +28,7 @@ class MPDSubset(Dataset): # using tid_to_index, tracks, nb_negatives
         neg_track_indices = np.random.choice(not_listened, self.nb_negatives, replace=False)
         neg_tracks = list(map(lambda i: self.mel_enc(self.all_tracks[i][0]), neg_track_indices))
 
-        return playlist_encoded, pos_track, neg_tracks
+        return pid, pos_track, neg_tracks
 
     def __len__(self):
         return len(self.tracks)
