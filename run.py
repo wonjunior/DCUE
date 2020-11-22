@@ -64,6 +64,8 @@ parser.add_argument('--mel-mean', metavar='NB', type=float, default=-41.8637,
     help='Mean of the mel spectrogtrams in the training set.')
 parser.add_argument('--mel-std', metavar='NB', type=float, default=14.2748,
     help='Standard deviation of the mel spectrogtrams in the training set.')
+    parser.add_argument('--limit', metavar='NB', type=int, default=10000,
+        help='Limits the number of playlists to load.')
 
 parser.add_argument('--embedding-size', metavar='NB', type=int, default=128,
     help='Embedding size of the playlist and tracks.')

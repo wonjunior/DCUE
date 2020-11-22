@@ -3,7 +3,7 @@ import os, re, json, requests
 import numpy as np
 from tqdm import tqdm
 
-def fetch_mpd(fp):
+def fetch_mpd(fp, limit=None):
     if not os.path.isdir(fp):
         raise FileNotFoundError('directory "%s" not found' % fp)
 
@@ -17,6 +17,8 @@ def fetch_mpd(fp):
 
         for playlist in mpd_slice['playlists']:
             pid = playlist['pid']
+            if limit and pid >= limit:
+                break
             playlists.append([])
 
             for t in playlist['tracks']:
