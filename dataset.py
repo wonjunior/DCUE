@@ -24,8 +24,10 @@ class MPDSubset(Dataset): # using tid_to_index, tracks, nb_negatives
         pos_track = self.mel_enc(tid)
 
         # Construct negative sampling items.
-        not_listened = np.squeeze(np.argwhere(playlist_encoded == 0), axis=1)
-        neg_track_indices = np.random.choice(not_listened, self.nb_negatives, replace=False)
+        # not_listened = np.squeeze(np.argwhere(playlist_encoded == 0), axis=1)
+        # neg_track_indices = np.random.choice(not_listened, self.nb_negatives, replace=False)
+        negatives = set(range(len(self.tracks))) - set(playlist_encoded)
+        neg_track_indices = random.sample(negatives, self.nb_negatives)
         neg_tracks = list(map(lambda i: self.mel_enc(self.all_tracks[i][0]), neg_track_indices))
 
         return pid, pos_track, neg_tracks
