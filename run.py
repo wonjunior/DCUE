@@ -5,27 +5,41 @@ from statistics import mean
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-from helpers import bar
+from helpers import bar, show_perf
 from fetching import fetch_mpd, fetch_mels
-from processing import processing, split
+from processing import processing, split, analyse_mels
 from encoder import PlaylistEncoder, MelEncoder
 from dataset import MPDSubset
 from model import DCUE, DCUEWrapper
 
 def main(args):
-    playlists, tracks = fetch_mpd(args.mpd)
+    playlists, tracks = fetch_mpd(args.mpd, args.limit)
 
     if args.mode == 'stats':
         size = [len(p) for p in playlists]
+        tracks = processing(tracks, args.mels)
         occurencies = [len(t[-1]) for t in tracks]
+
         print('%i playlists and %i unique tracks' % (len(playlists), len(tracks)))
-        print('playlist sizes: min=%i ; avg=%i ; max=%i' % (min(size), mean(size), max(size)))
-        bar(occurencies)
+        print('Playlist sizes: min=%i ; avg=%.2f ; max=%i' % (min(size), mean(size), max(size)))
+        print('Track occurences: min=%i ; avg=%.2f ; max=%i' % \
+            (min(occurencies), mean(occurencies), max(occurencies)))
+        print('Number of interaction (playlist-track pairs): %i' % sum(occurencies))
+
+        bar(size, title='Playlist sizes', xlabel='Number of tracks', ylabel='freq.')
+        bar(occurencies, title='Track occurencies', xlabel='Number of occurencies', ylabel='freq.')
+
 
     elif args.mode == 'fetch-mels':
         tracks = [t for t in tracks if len(t[-1]) > 1] # remove tracks with a single occurence
         fails = fetch_mels(tracks, args.mels)
         print('failed to find and download %i tracks' % len(fails))
+
+
+    elif args.mode == 'analyse-mels':
+        track_list = processing(tracks, args.mels)
+        train_tracks, *_ = split(track_list)
+        analyse_mels(args.mels, train_tracks, x_min=args.mel_min, x_max=args.mel_max)
 
     elif args.mode == 'train':
         track_list = processing(tracks, args.mels)[:10000]
@@ -49,11 +63,7 @@ def main(args):
 
 parser = ArgumentParser()
 
-parser.add_argument('mode', type=str, default='train', choices=['stats', 'analyse-mels', 'fetch-mels', 'train'])
-parser.add_argument('--mpd', type=str, metavar='FILE', default='../datasets/MPD/subset',
-    help='Directory where the Million Playlist Dataset csv files are located.')
-parser.add_argument('--mels', type=str, metavar='FILE', default='../datasets/mels',
-    help='Path where the mel-spectrograms are or will be extracted to.')
+    parser.add_argument('mode', type=str, default='train',
 parser.add_argument('--load', type=str, metavar='FILE', default=None)
 parser.add_argument('--save', type=str, metavar='FILE', default='out.pth')
 parser.add_argument('--nb-negatives', type=int, metavar='NB', default=20,
