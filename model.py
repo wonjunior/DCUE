@@ -8,7 +8,7 @@ import torch.optim as optim
 from tqdm import tqdm
 
 class PlaylistMLP(nn.Module):
-    def __init__(self, encoding_size, embedding_size):
+    def __init__(self, encoding_size, emb_size):
         super(PlaylistMLP, self).__init__()
         self.body = nn.Sequential(
             nn.Embedding(encoding_size, 300),
@@ -16,7 +16,7 @@ class PlaylistMLP(nn.Module):
             nn.ReLU(),
             nn.Linear(300, 300),
             nn.ReLU(),
-            nn.Linear(300, embedding_size)
+            nn.Linear(300, emb_size)
         )
 
     def forward(self, y):
@@ -24,73 +24,76 @@ class PlaylistMLP(nn.Module):
 
 
 class MelCNN(nn.Module):
-    def __init__(self, embedding_size):
+    def __init__(self, cn_in, emb_size):
         super(MelCNN, self).__init__()
 
         self.body = nn.Sequential(
-            nn.Conv1d(in_channels=128, out_channels=128, kernel_size=4, padding=2, stride=1),
+            nn.Conv1d(in_channels=cn_in, out_channels=emb_size, kernel_size=4, padding=2, stride=1),
             nn.ReLU(),
             nn.MaxPool1d(kernel_size=4, padding=2, stride=1),
 
-            nn.Conv1d(in_channels=128, out_channels=embedding_size, kernel_size=4, padding=2, stride=1),
+            nn.Conv1d(in_channels=emb_size, out_channels=emb_size, kernel_size=4, padding=2, stride=1),
             nn.ReLU(),
             nn.MaxPool1d(kernel_size=4, padding=2, stride=1),
 
-            nn.Conv1d(in_channels=128, out_channels=embedding_size, kernel_size=4, padding=2, stride=1),
+            nn.Conv1d(in_channels=emb_size, out_channels=emb_size, kernel_size=4, padding=2, stride=1),
             nn.ReLU(),
             nn.MaxPool1d(kernel_size=4, padding=2, stride=1),
 
-            nn.Conv1d(in_channels=128, out_channels=embedding_size, kernel_size=2, padding=1, stride=1),
+            nn.Conv1d(in_channels=emb_size, out_channels=emb_size, kernel_size=2, padding=1, stride=1),
             nn.ReLU(),
             nn.MaxPool1d(kernel_size=2, padding=1, stride=1),
 
-            nn.Conv1d(in_channels=128, out_channels=1, kernel_size=1, padding=1, stride=1),
+            nn.Conv1d(in_channels=emb_size, out_channels=1, kernel_size=1, padding=1, stride=1),
             nn.ReLU(),
 
-            nn.AdaptiveAvgPool1d(embedding_size),
+            nn.AdaptiveAvgPool1d(emb_size),
             nn.Flatten(),
-            nn.Linear(embedding_size, embedding_size)
+            nn.Linear(emb_size, emb_size)
         )
 
     def forward(self, y):
         return self.body(y)
 
-import pdb
+
 class DCUE(nn.Module):
-    def __init__(self, playlist_enc_size, embedding_size): # add option to change similarity
+    """Siaseme model run with negative sampling."""
+
+    def __init__(self, playlist_enc_size, cnn_channels, emb_size): # add option to change similarity
         super(DCUE, self).__init__()
-        self.mlp = PlaylistMLP(playlist_enc_size, embedding_size)
-        self.cnn = MelCNN(embedding_size)
-        self.similarity = nn.CosineSimilarity()
+        self.mlp = PlaylistMLP(playlist_enc_size, emb_size)
+        self.cnn = MelCNN(cn_in=cnn_channels, emb_size=emb_size)
+        self.similarity = nn.CosineSimilarity() #eps=1e-6
 
     def forward(self, playlist, positive, negatives):
-        assert(len(negatives) == 20)
         U = self.mlp(playlist.long())
         I_pos = self.cnn(positive.float())
         I_neg = [self.cnn(n.float()) for n in negatives]
         I = torch.stack([I_pos] + I_neg, axis=1)
-        sim = torch.stack([self.similarity(U, I[:,i]) for i in range(I.shape[1])], axis=1)
+        sim = [self.similarity(U, I[:,i]) for i in range(I.shape[1])]
+        return torch.stack(sim, axis=1)
 
-        # pdb.set_trace()
-
-        return sim
 
 class DCUEWrapper:
     """Runner wrapper for the DCUE model."""
 
-    def __init__(self, model, train_dl, valid_dl, fp):
+    def __init__(self, model, train_dl, valid_dl, save, criterion, margin):
+        self.save = save
         self.model = model
         self.train_dl = train_dl
         self.valid_dl = valid_dl
         self.optimizer = optim.SGD(model.parameters(), lr=0.2, momentum=0.9, nesterov=True)
-        self.criterion = nn.MultiMarginLoss(margin=1)#0.2)
-        self.fp = fp
+
+        if criterion == 'cross_entropy':
+            self.criterion = nn.MultiMarginLoss(margin=margin)
+        else:
+            self.criterion = nn.CrossEntropyLoss()
 
     def train(self, epochs, load=None):
         if load:
             start, losses, since = self.load(load)
             print('Resume training at epoch={} (already elapsed: {})' \
-                .format(start + 1, timedelta(seconds=time.time()-since)))
+                .format(start + 1, timedelta(seconds=int(time.time()-since))))
         else:
             start, losses, since = 0, [], time.time()
 
@@ -99,11 +102,7 @@ class DCUEWrapper:
             losses += self.train_epoch()
             elapsed = time.time() - since
             self.checkpoint(epoch, losses, elapsed)
-
-            validation_loss = [0]#self.validate()
-            print('summary of epoch: training loss={:.4f} - validation loss={:.4f}' \
-                .format(mean(losses), mean(validation_loss)))
-        print('Training finished in {}'.format(timedelta(seconds=elapsed)))
+        print('Training finished in {}'.format(timedelta(seconds=int(elapsed))))
 
     def checkpoint(self, epoch, losses, elapsed):
         torch.save({
@@ -111,8 +110,8 @@ class DCUEWrapper:
             'state_dict': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'losses': losses,
-            'elapsed': elapsed
-        }, self.fp)
+            'elapsed': elapsed,
+        }, self.save)
 
     def load(self, fp):
         print('loading state from %s' % fp)
@@ -123,7 +122,7 @@ class DCUEWrapper:
         return checkpoint['epoch'], checkpoint['losses'], start
 
     def train_epoch(self):
-        losses = []
+        losses, accuracies = [], []
         t = tqdm(self.train_dl)
         for x in t:
             self.optimizer.zero_grad()
@@ -138,7 +137,9 @@ class DCUEWrapper:
             loss = loss.item()
             accuracy = (torch.argmax(y_hat, dim=1) == 0).float().mean().item()
             losses.append(loss)
-            t.set_description('loss {:.5f} - accuracy {:.1f}%'.format(loss, accuracy*100))
+            accuracies.append(accuracy)
+            t.set_description('loss {:.5f} (mean={:.5f}) - accuracy {:.1f}% (mean={:.1f}%)' \
+                .format(loss, mean(losses), accuracy*100, mean(accuracies)*100))
         return losses
 
     def validate(self):
