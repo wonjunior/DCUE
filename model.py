@@ -1,4 +1,4 @@
-import time
+from time import time
 from statistics import mean
 from datetime import timedelta
 
@@ -59,11 +59,11 @@ class MelCNN(nn.Module):
 class DCUE(nn.Module):
     """Siaseme model run with negative sampling."""
 
-    def __init__(self, playlist_enc_size, cnn_channels, emb_size): # add option to change similarity
+    def __init__(self, playlist_count, cnn_channels, emb_size): # add option to change similarity
         super(DCUE, self).__init__()
-        self.mlp = PlaylistMLP(playlist_enc_size, emb_size)
+        self.mlp = PlaylistMLP(playlist_count, emb_size)
         self.cnn = MelCNN(cn_in=cnn_channels, emb_size=emb_size)
-        self.similarity = nn.CosineSimilarity() #eps=1e-6
+        self.similarity = nn.CosineSimilarity(eps=1e-6)
 
     def forward(self, playlist, positive, negatives):
         U = self.mlp(playlist.long())
@@ -73,58 +73,67 @@ class DCUE(nn.Module):
         sim = [self.similarity(U, I[:,i]) for i in range(I.shape[1])]
         return torch.stack(sim, axis=1)
 
+# class Training: SOON
 
 class DCUEWrapper:
     """Runner wrapper for the DCUE model."""
 
-    def __init__(self, model, train_dl, valid_dl, save, criterion, margin):
-        self.save = save
+    def __init__(self, model, train_dl, valid_dl, save, criterion, margin, lr):
+        self.fp_out = save
         self.model = model
         self.train_dl = train_dl
         self.valid_dl = valid_dl
-        self.optimizer = optim.SGD(model.parameters(), lr=0.2, momentum=0.9, nesterov=True)
+        self.optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, nesterov=True)
 
         if criterion == 'cross_entropy':
-            self.criterion = nn.MultiMarginLoss(margin=margin)
-        else:
             self.criterion = nn.CrossEntropyLoss()
-
-    def train(self, epochs, load=None):
-        if load:
-            start, losses, since = self.load(load)
-            print('Resume training at epoch={} (already elapsed: {})' \
-                .format(start + 1, timedelta(seconds=int(time.time()-since))))
         else:
-            start, losses, since = 0, [], time.time()
+            self.criterion = nn.MultiMarginLoss(margin=margin)
+
+    def fit(self, epochs, load=None):
+        if load:
+            since, start, train_loss, train_acc, valid_loss, valid_acc = self.load(load)
+            print('Resume training at epoch={} (already elapsed: {})' \
+                .format(start + 1, timedelta(seconds=int(time()-since))))
+        else:
+            since, start, train_loss, train_acc, valid_loss, valid_acc = time(), 0, [], [], [], []
 
         for epoch in range(start, epochs):
             print('Epoch %i/%i' % (epoch + 1, epochs))
-            losses += self.train_epoch()
-            elapsed = time.time() - since
-            self.checkpoint(epoch, losses, elapsed)
+            elapsed = time() - since
+            train = self.train()
+            train_loss += train[0]
+            train_acc += train[1]
+            valid = self.validate()
+            valid_loss += valid[0]
+            valid_acc += valid[1]
+            self.save(elapsed, epoch, train_loss, train_acc, valid_loss, valid_acc)
         print('Training finished in {}'.format(timedelta(seconds=int(elapsed))))
 
-    def checkpoint(self, epoch, losses, elapsed):
+    def save(self, elapsed, epoch, train_loss, train_acc, valid_loss, valid_acc):
         torch.save({
-            'epoch': epoch + 1,
-            'state_dict': self.model.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'losses': losses,
             'elapsed': elapsed,
-        }, self.save)
+            'epoch': epoch + 1,
+            'model': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'train_loss': train_loss,
+            'train_acc': train_acc,
+            'valid_loss': valid_loss,
+            'valid_acc': valid_acc,
+        }, self.fp_out)
 
     def load(self, fp):
-        print('loading state from %s' % fp)
-        checkpoint = torch.load(fp)
-        self.model.load_state_dict(checkpoint['state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
-        start = time.time() - checkpoint['elapsed']
-        return checkpoint['epoch'], checkpoint['losses'], start
+        state = torch.load(fp)
+        print('loaded state from %s' % fp)
+        self.model.load_state_dict(state['model'])
+        self.optimizer.load_state_dict(state['optimizer'])
+        start = time() - state['elapsed']
+        return start, state['epoch'], state['train_loss'], state['train_acc'], \
+               state['valid_loss'], state['valid_acc']
 
-    def train_epoch(self):
+    def train(self):
         losses, accuracies = [], []
-        t = tqdm(self.train_dl)
-        for x in t:
+        for x in (t := tqdm(self.train_dl)):
             self.optimizer.zero_grad()
 
             y = torch.zeros(x[0].shape[0], dtype=torch.long)
@@ -134,20 +143,21 @@ class DCUEWrapper:
             loss.backward()
             self.optimizer.step()
 
-            loss = loss.item()
-            accuracy = (torch.argmax(y_hat, dim=1) == 0).float().mean().item()
-            losses.append(loss)
-            accuracies.append(accuracy)
+            accuracy = (torch.argmax(y_hat, axis=1) == 0).float().mean()
+            losses.append(loss.item())
+            accuracies.append(accuracy.item())
             t.set_description('loss {:.5f} (mean={:.5f}) - accuracy {:.1f}% (mean={:.1f}%)' \
                 .format(loss, mean(losses), accuracy*100, mean(accuracies)*100))
-        return losses
+        return losses, accuracies
 
+    @torch.no_grad()
     def validate(self):
-        losses = []
-        with torch.no_grad():
-            for x in self.valid_dl:
-                y = torch.zeros(x[0].shape[0], dtype=torch.long)
-                y_hat = self.model(*x)
-                loss = self.criterion(y_hat, y)
-                losses.append(loss.item())
-        return losses
+        losses, accuracies = [], []
+        for x in self.valid_dl:
+            y = torch.zeros(x[0].shape[0], dtype=torch.long)
+            y_hat = self.model(*x)
+
+            loss = self.criterion(y_hat, y)
+            accuracy = (torch.argmax(y_hat, axis=1) == 0).float().mean()
+            losses.append(loss.item())
+            accuracies.append(accuracy.item())
