@@ -5,29 +5,22 @@ class PlaylistEncoder():
     """
     Encodes the playlist into the 'training-set basis'. A playlist can only be represented with
     the tracks that are in the training set, as all other tracks are unknown to that playlist.
+
+    Example:
+        >>> encoder = PlaylistEncoder([1, 10, 3, 8, 12, 90, 31])
+        >>> encoder([1, 4, 31, 9, 8, 10, 100, 99]) # will return [1, 31, 8, 10]
     """
 
-    def __init__(self, tracks, accumulate):
+    def __init__(self, tracks):
         """
         Parameters
         ---
             tracks: the list of track ids used to encode a playlist.
         """
         self.mapping = {tid: i for i, (tid, *_) in enumerate(tracks)}
-        self.accumulate = accumulate
-
-    # def __call__(self, tids):
-    #     track_indices = [self.mapping[tid] for tid in tids if tid in self.mapping]
-    #     encoding = np.zeros(len(self))
-    #     for index, listens in zip(*np.unique(track_indices, return_counts=True)):
-    #         encoding[index] = listens if self.accumulate else 1
-    #     return encoding
 
     def __call__(self, tids):
         return [self.mapping[tid] for tid in tids if tid in self.mapping]
-
-    def __len__(self):
-        return len(self.mapping)
 
 
 class MelEncoder():
@@ -40,11 +33,8 @@ class MelEncoder():
         self.std = std
 
     def __call__(self, tid):
-        mel = np.load(os.sep.join((self.fp, tid+'.npy')))
-        tiled = np.tile(mel, (1, 1 + self.length // mel.shape[1]))[:,:self.length]
+        mel = np.load(os.sep.join((self.fp, tid + '.npy')))
+        tiled = np.tile(mel, (1, 1 + self.length // mel.shape[1]))[:, :self.length]
         mapped = (tiled - self.min)/(self.max - self.min)
         normalized = (mapped - self.mean)/self.std
         return normalized
-
-    def __len__(self):
-        return self.length
