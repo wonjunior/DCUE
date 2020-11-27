@@ -1,7 +1,7 @@
 import os, random, math
 from tqdm import tqdm
 
-def processing(tracks, mels_dir):
+def processing(tracks, mels_dir): # might need to rename, it's only giving available tracks
     mels = set(os.listdir(mels_dir))
     track_list = []
     for tid, artist, track, occurences in tracks:
@@ -26,4 +26,4 @@ def analyse_mels(fp, tracks, x_min=0, x_max=1):
 
     x_mean = x_sum/n
     x_std = math.sqrt(x_sum2/n - x_mean**2)
-    print('mean=%.4f; std=%.4f' % (x_mean, x_std))
+    return x_mean, x_std
